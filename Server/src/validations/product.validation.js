@@ -47,7 +47,7 @@ export const createProductValidation = z.object({
   length: z.coerce.number().int().min(1, "Length must be from 1cm onwards").max(600, "Length cannot exceed 600cm"),
   width: z.coerce.number().int().min(1, "Width must be from 1cm onwards").max(300, "Width cannot exceed 300cm"),
   height: z.coerce.number().int().min(1, "Height must be from 1cm onwards").max(250, "Height cannot exceed 250cm"),
-  weight: z.coerce.number().min(1, "Weight must be from 1kg onwards").max(1600, "Weight cannot exceed 1,600kg (1.6 tons)"),
+  weight: z.coerce.number().min(1, "Weight must be at least 1g").max(3_999_999, "Weight must be under 4,000,000g (4 tons)"),
   // Category-specific specifications
   specifications: z.preprocess((val) => {
     if (typeof val === 'string') {
@@ -57,6 +57,45 @@ export const createProductValidation = z.object({
   }, z.union([vehicleSpecsSchema, batterySpecsSchema, motorcycleSpecsSchema])),
   status: z.enum(["active", "sold", "inactive"]).optional(),
   isFeatured: z.coerce.boolean().optional()
+}).superRefine((data, ctx) => {
+  if (data.category === "battery") {
+    if (data.length >= 100) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["length"],
+        message: "Battery length must be under 100cm"
+      });
+    }
+    if (data.width >= 100) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["width"],
+        message: "Battery width must be under 100cm"
+      });
+    }
+    if (data.height >= 100) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["height"],
+        message: "Battery height must be under 100cm"
+      });
+    }
+    if (data.weight >= 10_000) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["weight"],
+        message: "Battery weight must be under 10,000g (10kg)"
+      });
+    }
+  }
+
+  if (data.category === "vehicle" && data.weight >= 4_000_000) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["weight"],
+      message: "Vehicle weight must be under 4,000,000g (4 tons)"
+    });
+  }
 });
 
 export const updateProductValidation = createProductValidation.partial();
