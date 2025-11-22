@@ -220,12 +220,14 @@ export async function createShippingOrder(req, res) {
     let sellerAddr = null;
     let unitPrice = typeof b.unit_price === 'number' ? b.unit_price : null;
     let shippingFee = typeof b.shipping_fee === 'number' ? b.shipping_fee : null;
+    let productCategory = null;
     if (b.product_id) {
       try {
-        productDoc = await Product.findById(b.product_id).select("_id seller price title");
+        productDoc = await Product.findById(b.product_id).select("_id seller price title category");
         if (productDoc) {
           if (unitPrice === null || Number.isNaN(unitPrice)) unitPrice = Number(productDoc.price) || 0;
           if (!sellerId && productDoc.seller) sellerId = String(productDoc.seller);
+          productCategory = productDoc.category || null;
         }
       } catch {}
     }
@@ -240,11 +242,13 @@ export async function createShippingOrder(req, res) {
     // Require pricing context and pre-check wallet balance BEFORE creating GHN order
     const buyerId = req.user?.sub || req.user?.id;
     let finalAmount = null;
+    // Never charge shipping fee - only charge product price for all categories
     if (!(typeof unitPrice === 'number' && typeof shippingFee === 'number')) {
       return res.status(400).json({ error: 'Thiếu unit_price hoặc shipping_fee' });
     }
     if (typeof unitPrice === 'number' && typeof shippingFee === 'number') {
-      finalAmount = Math.max(0, Math.round(unitPrice) + Math.max(0, Math.round(shippingFee)));
+      // Always only charge product price, never charge shipping fee
+      finalAmount = Math.max(0, Math.round(unitPrice));
       try {
         const buyer = await User.findById(buyerId).select('wallet email name phone preferences');
         if (!buyer) return res.status(404).json({ error: 'Buyer not found' });
@@ -345,7 +349,8 @@ export async function createShippingOrder(req, res) {
         }
         const fee = typeof shippingFee === 'number' ? shippingFee : 0;
         const totalAmount = Math.max(0, Math.round(unitPrice));
-        const finalAmountCalc = totalAmount + Math.max(0, Math.round(fee));
+        // Never charge shipping fee - only charge product price for all categories
+        const finalAmountCalc = totalAmount;
 
         // Deduct wallet if we pre-validated the balance
         const buyer = await User.findById(buyerId);
@@ -356,16 +361,23 @@ export async function createShippingOrder(req, res) {
             buyer.wallet.totalSpent = (buyer.wallet?.totalSpent || 0) + finalAmountCalc;
             await buyer.save();
 
+            // Create transaction with correct amount and description
             await WalletTransaction.create({
               userId: buyer._id,
               type: 'purchase',
-              amount: finalAmountCalc,
+              amount: finalAmountCalc, // Only product price, never shipping fee
               balanceBefore,
               balanceAfter: buyer.wallet.balance,
-              description: `Thanh toán đơn hàng ${orderCode || ''}`.trim(),
+              description: `Thanh toán đơn hàng ${orderCode || ''} (chỉ tiền hàng)`.trim(),
               status: 'completed',
               reference: orderCode || undefined,
-              metadata: { orderId: orderCode || null, productId: String(b.product_id) }
+              metadata: { 
+                orderId: orderCode || null, 
+                productId: String(b.product_id),
+                productPrice: totalAmount,
+                shippingFee: 0, // Never charge shipping fee
+                category: productCategory
+              }
             });
           }
         }
